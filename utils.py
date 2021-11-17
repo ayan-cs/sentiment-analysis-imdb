@@ -3,13 +3,11 @@ import numpy as np
 from bs4 import BeautifulSoup
 from collections import defaultdict
 from sklearn.preprocessing import LabelEncoder
-from sklearn.feature_extraction.text import TfidfTransformer, CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score
-from sklearn.metrics import make_scorer, f1_score, accuracy_score
-from matplotlib import pyplot as plt
-import pickle, os
+from sklearn.metrics import make_scorer, f1_score, accuracy_score, classification_report, roc_auc_score, plot_roc_curve
+import pickle, os, glob
 
 def preprocess(text):
     soup = BeautifulSoup(text, "html.parser")
@@ -23,16 +21,17 @@ def preprocess(text):
             continue
         else:
             temp+=i
-    temp = temp.split()
-    for i in range(len(temp)):
-        temp[i] = nltk.stem.PorterStemmer().stem(temp[i])
-    return ' '.join(temp)
+    #temp = temp.split()
+    #for i in range(len(temp)):
+    #    temp[i] = nltk.stem.PorterStemmer().stem(temp[i])
+    #return ' '.join(temp)
+    return temp
 
 def labelEncoder(dfcol):
     le = LabelEncoder().fit(dfcol)
     return le.transform(dfcol)
 
-def createSplit(df):
+def createSplit(df, printsize=False):
     total_size = len(df)
     random_permutation = np.random.permutation(total_size)
     train_size = int(total_size*0.7)
@@ -40,31 +39,28 @@ def createSplit(df):
     val_size = test_size
 
     X_train = df['review'][random_permutation[:train_size]]
-    y_train = df['sentiment'][random_permutation[:train_size]]
+    y_train = np.array(df['sentiment'][random_permutation[:train_size]])
 
     X_test = df['review'][random_permutation[train_size:train_size+test_size]]
-    y_test = df['sentiment'][random_permutation[train_size:train_size+test_size]]
+    y_test = np.array(df['sentiment'][random_permutation[train_size:train_size+test_size]])
 
     X_val = df['review'][random_permutation[-test_size:]]
-    y_val = df['sentiment'][random_permutation[-test_size:]]
+    y_val = np.array(df['sentiment'][random_permutation[-test_size:]])
+
+    if printsize==True:
+        print("Training set : Validation set : Test set = "+str(len(X_train))+" : "+str(len(X_val))+" : "+str(len(X_test)))
 
     return (X_train, y_train, X_val, y_val, X_test, y_test)
 
-def trainClassifier(clf, ngram, train_X, train_y, val_X, val_y):
-    if val_y is None or train_y is None:
-        print("None")
-    count = CountVectorizer(ngram_range=(1, ngram), stop_words=nltk.corpus.stopwords.words('english'))
-    tfidf = TfidfTransformer()
-    pipe = Pipeline([('count', count), ('tfidf', tfidf), ('classifier', clf)])
-    start = datetime.now()
+def trainClassifier(clf, ngram_lb, ngram_ub, train_X, train_y, val_X, val_y):
+    #count = CountVectorizer(ngram_range=(1, ngram), stop_words=nltk.corpus.stopwords.words('english'))
+    tfidf = TfidfVectorizer(ngram_range=(ngram_lb, ngram_ub), stop_words=nltk.corpus.stopwords.words('english'), max_features=None, sublinear_tf=True)
+    pipe = Pipeline([('tfidf', tfidf), ('classifier', clf)])
     pipe.fit(train_X.astype(str), train_y)
-    end = datetime.now()
     acc = accuracy_score(val_y, pipe.predict(val_X))
-    f1acc = np.mean(cross_val_score(pipe, val_X, val_y, scoring=make_scorer(f1_score), cv=10, n_jobs=-1))
+    f1acc = np.mean(cross_val_score(pipe, val_X, val_y, scoring=make_scorer(f1_score), cv=10))
     return {
         'pipeline' : pipe,
-        'c' : c,
-        'ngram' : ngram,
         'acc' : acc,
         'f1_cv' : f1acc
     }
@@ -72,3 +68,46 @@ def trainClassifier(clf, ngram, train_X, train_y, val_X, val_y):
 def saveModel(clf, model, path):
     name = f"{clf}-{model['f1_cv']*100:.3f}.sav"
     pickle.dump(model['pipeline'], open(os.path.join(path, name), 'wb'))
+
+def getCommitteePrediction(path, X_test, print_report=False):
+    models = glob.glob(os.path.join(path, '*.sav'))
+    models = [pickle.load(open(model, 'rb')) for model in models]
+
+    comm_pred = []
+    for model in models:
+        comm_pred.append(model.predict(X_test))
+    comm_pred = np.array(comm_pred)
+    
+    y_pred = []
+    for i in range(len(X_test)):
+        y_pred.append(np.bincount(comm_pred[:,i]).argmax())
+
+    return y_pred
+
+
+def printReport(y_test, y_pred=None, model=None, X_test=None, roc=False):
+    if model==None:
+        print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
+        print(classification_report(y_test, y_pred))
+    else:
+        X_test = np.array(X_test)
+        y_test = np.array(y_test)
+        model = pickle.load(open(model, 'rb'))
+        y_pred = model.predict(X_test)
+        print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
+        print(classification_report(y_test, y_pred))
+
+        if roc==True:
+            plot_roc_curve(model, X_test, y_test)
+
+def getBestModel(path, name, overwrite):
+    models = glob.glob(os.path.join(path, '*.sav'))
+    models = [m for m in models if m.split('/')[-1].startswith(name)]
+    models = sorted(models, key=lambda x: float(x.split('-')[-1][:-4]), reverse=True)
+
+    if overwrite==True:
+        if len(models)>1:
+            for f in models[1:]:
+                os.remove(f)
+    
+    return pickle.load(open(models[0], 'rb'))
