@@ -21,11 +21,11 @@ def preprocess(text):
             continue
         else:
             temp+=i
-    #temp = temp.split()
-    #for i in range(len(temp)):
-    #    temp[i] = nltk.stem.PorterStemmer().stem(temp[i])
-    #return ' '.join(temp)
-    return temp
+    temp = temp.split()
+    temp = [w for w in temp if w not in nltk.corpus.stopwords.words('english')]
+    for i in range(len(temp)):
+        temp[i] = stemmer.stem(temp[i])
+    return ' '.join(temp)
 
 def labelEncoder(dfcol):
     le = LabelEncoder().fit(dfcol)
@@ -53,8 +53,7 @@ def createSplit(df, printsize=False):
     return (X_train, y_train, X_val, y_val, X_test, y_test)
 
 def trainClassifier(clf, ngram_lb, ngram_ub, train_X, train_y, val_X, val_y):
-    #count = CountVectorizer(ngram_range=(1, ngram), stop_words=nltk.corpus.stopwords.words('english'))
-    tfidf = TfidfVectorizer(ngram_range=(ngram_lb, ngram_ub), stop_words=nltk.corpus.stopwords.words('english'), max_features=None, sublinear_tf=True)
+    tfidf = TfidfVectorizer(ngram_range=(ngram_lb, ngram_ub), max_features=None, sublinear_tf=True) #stop_words=nltk.corpus.stopwords.words('english')
     pipe = Pipeline([('tfidf', tfidf), ('classifier', clf)])
     pipe.fit(train_X.astype(str), train_y)
     acc = accuracy_score(val_y, pipe.predict(val_X))
@@ -69,36 +68,18 @@ def saveModel(clf, model, path):
     name = f"{clf}-{model['f1_cv']*100:.3f}.sav"
     pickle.dump(model['pipeline'], open(os.path.join(path, name), 'wb'))
 
-def getCommitteePrediction(path, X_test, print_report=False):
-    models = glob.glob(os.path.join(path, '*.sav'))
-    models = [pickle.load(open(model, 'rb')) for model in models]
 
-    comm_pred = []
-    for model in models:
-        comm_pred.append(model.predict(X_test))
-    comm_pred = np.array(comm_pred)
-    
-    y_pred = []
-    for i in range(len(X_test)):
-        y_pred.append(np.bincount(comm_pred[:,i]).argmax())
+def printReport(X_test, y_test, model, roc=False):
+    X_test = np.array(X_test)
+    y_test = np.array(y_test)
+    print(f"Prediction for {model.split('/')[-1].split('-')[0]}")
+    model = pickle.load(open(model, 'rb'))
+    y_pred = model.predict(X_test)
+    print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
+    print(classification_report(y_test, y_pred))
 
-    return y_pred
-
-
-def printReport(y_test, y_pred=None, model=None, X_test=None, roc=False):
-    if model==None:
-        print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
-        print(classification_report(y_test, y_pred))
-    else:
-        X_test = np.array(X_test)
-        y_test = np.array(y_test)
-        model = pickle.load(open(model, 'rb'))
-        y_pred = model.predict(X_test)
-        print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
-        print(classification_report(y_test, y_pred))
-
-        if roc==True:
-            plot_roc_curve(model, X_test, y_test)
+    if roc==True:
+        plot_roc_curve(model, X_test, y_test)
 
 def getBestModel(path, name, overwrite):
     models = glob.glob(os.path.join(path, '*.sav'))
