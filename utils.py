@@ -60,35 +60,45 @@ def trainClassifier(clf, ngram_lb, ngram_ub, train_X, train_y, val_X, val_y):
     f1acc = np.mean(cross_val_score(pipe, val_X, val_y, scoring=make_scorer(f1_score), cv=10))
     return {
         'pipeline' : pipe,
+        'feature_extractor' : tfidf,
         'acc' : acc,
         'f1_cv' : f1acc
     }
 
 def saveModel(clf, model, path):
-    name = f"{clf}-{model['f1_cv']*100:.3f}.sav"
-    pickle.dump(model['pipeline'], open(os.path.join(path, name), 'wb'))
+    clf_name = f"{clf}-{model['f1_cv']*100:.5f}.sav"
+    vect_name = f"{clf}-{model['f1_cv']*100:.5f}.pk"
+    pickle.dump(model['pipeline'], open(os.path.join(path, clf_name), 'wb'))
+    pickle.dump(model['feature_extractor'], open(os.path.join(path, vect_name), 'wb'))
 
 
 def printReport(X_test, y_test, model, roc=False):
-    X_test = np.array(X_test)
+    #vect = pickle.load(open(model['vect'], 'rb'))
+    #X_test = vect.transform(X_test)
     y_test = np.array(y_test)
-    print(f"Prediction for {model.split('/')[-1].split('-')[0]}")
-    model = pickle.load(open(model, 'rb'))
-    y_pred = model.predict(X_test)
+    print(f"Prediction for {model['clf'].split('/')[-1].split('-')[0]} on Test Data")
+    pipe = pickle.load(open(model['clf'], 'rb'))
+    y_pred = pipe.predict(X_test.astype(str))
     print(f"Accuracy Score : {accuracy_score(y_test, y_pred):.3f}\nF1 Score : {f1_score(y_test, y_pred):.3f}")
     print(classification_report(y_test, y_pred))
 
     if roc==True:
-        plot_roc_curve(model, X_test, y_test)
+        plot_roc_curve(pipe, X_test, y_test)
 
 def getBestModel(path, name, overwrite):
     models = glob.glob(os.path.join(path, '*.sav'))
     models = [m for m in models if m.split('/')[-1].startswith(name)]
     models = sorted(models, key=lambda x: float(x.split('-')[-1][:-4]), reverse=True)
 
+    vects = glob.glob(os.path.join(path, '*.pk'))
+    vects = [m for m in vects if m.split('/')[-1].startswith(name)]
+    vects = sorted(vects, key=lambda x: float(x.split('-')[-1][:-3]), reverse=True)
+
     if overwrite==True:
         if len(models)>1:
             for f in models[1:]:
                 os.remove(f)
+            for f in vects[1:]:
+                os.remove(f)
     
-    return pickle.load(open(models[0], 'rb'))
+    return {'clf' : pickle.load(open(models[0], 'rb')), 'vect' : pickle.load(open(vects[0], 'rb'))}
